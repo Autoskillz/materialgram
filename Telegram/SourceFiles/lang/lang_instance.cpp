@@ -16,6 +16,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/qthelp_regex.h"
 
+#include "lang_auto_counts.h" // kKeysCount, kTagsCount.
+
 namespace Lang {
 namespace {
 
@@ -715,7 +717,7 @@ void Instance::applyDifferenceToMe(
 	}
 	auto language = qs(difference.vlang_code()).trimmed().remove("-raw");
 	if (registrationStrings.contains(language)) {
-		applyValue("materialgram_info_registration", registrationStrings.value(language).toUtf8());
+		applyValue("lng_materialgram_info_registration", registrationStrings.value(language).toUtf8());
 	}
 	if (!_derived) {
 		_updated.fire({});

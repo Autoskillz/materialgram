@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
+#include "info/profile/info_profile_phone_menu.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_cloud_manager.h"
 #include "lang/lang_instance.h"
@@ -69,6 +70,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
+#include "ui/toast/toast.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/continuous_sliders.h"
@@ -78,6 +80,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+#include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
@@ -250,7 +253,11 @@ void Cover::initViewers() {
 		} else {
 			QGuiApplication::clipboard()->setText(
 				_user->session().createInternalLinkFull(username));
-			_controller->showToast(tr::lng_username_copied(tr::now));
+			_controller->showToast({
+				.text = { tr::lng_username_copied(tr::now) },
+				.iconLottie = u"toast/voip_invite"_q,
+				.iconLottieSize = st::toastLottieIconSize,
+			});
 		}
 	});
 }
@@ -523,7 +530,7 @@ void BuildHelpSection(SectionBuilder &builder) {
 
 	builder.addButton({
 		.id = u"materialgram-channel"_q,
-		.title = tr::materialgram_settings_channel(),
+		.title = tr::lng_materialgram_settings_channel(),
 		.icon = { &st::menuIconMaterialgram },
 		.onClick = [=] {
 			UrlClickHandler::Open("https://t.me/materialgram");
@@ -533,7 +540,7 @@ void BuildHelpSection(SectionBuilder &builder) {
 
 	builder.addButton({
 		.id = u"materialgram-releases"_q,
-		.title = tr::materialgram_settings_github(),
+		.title = tr::lng_materialgram_settings_github(),
 		.icon = { &st::menuIconGitHub },
 		.onClick = [=] {
 			UrlClickHandler::Open("https://github.com/kukuruzka165/materialgram/releases");
@@ -614,6 +621,7 @@ void Main::fillTopBarMenu(const Ui::Menu::MenuCallback &addAction) {
 	const auto &list = Core::App().domain().accounts();
 	if (list.size() < Core::App().domain().maxAccounts()) {
 		addAction(tr::lng_menu_add_account(tr::now), [=] {
+			Core::App().setActivePrimaryWindow(&controller()->window());
 			Core::App().domain().addActivated(MTP::Environment{});
 		}, &st::menuIconAddAccount);
 	}

@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/file_utilities.h"
 #include "core/update_checker.h"
+#include "core/version.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
@@ -34,9 +35,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 rpl::producer<TextWithEntities> Text1() {
-	return tr::materialgram_about_text1(
+	return tr::lng_materialgram_about_text1(
 		lt_features_link,
-		tr::materialgram_about_github(tr::url(u"https://github.com/kukuruzka165/materialgram#features"_q)),
+		tr::lng_materialgram_about_github(tr::url(u"https://github.com/kukuruzka165/materialgram#features"_q)),
 		tr::marked);
 }
 
@@ -54,7 +55,7 @@ rpl::producer<TextWithEntities> Text2() {
 }
 
 rpl::producer<TextWithEntities> Text3() {
-	return tr::materialgram_about_text3(tr::marked);
+	return tr::lng_materialgram_about_text3(tr::marked);
 }
 
 } // namespace

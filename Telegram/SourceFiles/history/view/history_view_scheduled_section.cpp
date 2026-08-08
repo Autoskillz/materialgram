@@ -20,13 +20,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_send.h" // SendMenu::Type.
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/tooltip.h"
-#include "ui/widgets/scroll_area.h"
+#include "ui/widgets/elastic_scroll.h"
 #include "ui/widgets/shadow.h"
 #include "ui/chat/chat_style.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/dynamic_image.h"
 #include "ui/dynamic_thumbnails.h"
+#include "ui/screen_reader_mode.h"
 #include "ui/ui_utility.h"
 #include "api/api_editing.h"
 #include "api/api_sending.h"
@@ -150,8 +151,7 @@ ScheduledWidget::ScheduledWidget(
 , _forumTopic(forumTopic)
 , _scroll(
 	this,
-	controller->chatStyle()->value(lifetime(), st::historyScroll),
-	false)
+	controller->chatStyle()->value(lifetime(), st::historyScroll))
 , _topBar(this, controller)
 , _topBarShadow(this)
 , _composeControls(std::make_unique<ComposeControls>(
@@ -162,7 +162,9 @@ ScheduledWidget::ScheduledWidget(
 			listShowPremiumToast(emoji);
 		},
 		.mode = ComposeControls::Mode::Scheduled,
-		.sendMenuDetails = [] { return SendMenu::Details(); },
+		.sendMenuDetails = crl::guard(this, [=] {
+			return sendMenuDetails();
+		}),
 		.regularWindow = controller,
 		.stickerOrEmojiChosen = controller->stickerOrEmojiChosen(),
 	}))
@@ -182,6 +184,13 @@ ScheduledWidget::ScheduledWidget(
 		_theme = std::move(theme);
 		controller->setChatStyleTheme(_theme);
 	}, lifetime());
+
+	if (_forumTopic) {
+		_forumTopic->destroyed(
+		) | rpl::on_next([=] {
+			controller->showBackFromStack();
+		}, lifetime());
+	}
 
 	const auto state = Dialogs::EntryState{
 		.key = _history,
@@ -214,12 +223,20 @@ ScheduledWidget::ScheduledWidget(
 		updateAdaptiveLayout();
 	}, lifetime());
 
+	_scroll->setHandleTouch(false);
 	_inner = _scroll->setOwnedWidget(object_ptr<ListWidget>(
 		this,
 		&controller->session(),
 		static_cast<ListDelegate*>(this)));
+	_inner->lower();
 	_scroll->move(0, _topBar->height());
 	_scroll->show();
+	_scroll->setOverscrollBg(QColor(0, 0, 0, 0));
+	_scroll->setOverscrollEdges([=] {
+		return _inner->loadedAtTopKnown() && _inner->loadedAtTop();
+	}, [=] {
+		return _inner->loadedAtBottomKnown() && _inner->loadedAtBottom();
+	});
 	_scroll->scrolls(
 	) | rpl::on_next([=] {
 		onScroll();
@@ -348,6 +365,7 @@ void ScheduledWidget::setupComposeControls() {
 		}();
 	_composeControls->setHistory({
 		.history = _history.get(),
+		.sendActionFactory = [=] { return prepareSendAction({}); },
 		.writeRestriction = std::move(writeRestriction),
 	});
 
@@ -779,11 +797,12 @@ void ScheduledWidget::edit(
 		}
 		return;
 	} else {
-		const auto maxCaptionSize = !hasMediaWithCaption
-			? MaxMessageSize
-			: Data::PremiumLimits(&session()).captionLengthCurrent();
+		const auto limits = Data::PremiumLimits(&session());
+		const auto maxTextSize = hasMediaWithCaption
+			? limits.captionLengthCurrent()
+			: limits.messageLengthCurrent();
 		const auto remove = _composeControls->fieldCharacterCount()
-			- maxCaptionSize;
+			- maxTextSize;
 		if (remove > 0) {
 			controller()->showToast(
 				tr::lng_edit_limit_reached(tr::now, lt_count, remove));
@@ -928,7 +947,12 @@ SendMenu::Details ScheduledWidget::sendMenuDetails() const {
 		? SendMenu::Type::ScheduledToUser
 		: SendMenu::Type::Scheduled;
 	const auto effectAllowed = _history->peer->isUser();
-	return { .type = type, .effectAllowed = effectAllowed };
+	return {
+		.type = type,
+		.barePeerId = _history->peer->id.value,
+		.bareTopicRootId = _forumTopic ? _forumTopic->rootId().bare : 0,
+		.effectAllowed = effectAllowed,
+	};
 }
 
 bool ScheduledWidget::processChosenSticker(ChatHelpers::FileChosen &&chosen) {
@@ -1453,7 +1477,8 @@ void ScheduledWidget::listSelectionChanged(SelectedItems &&items) {
 		}
 	}
 	_topBar->showSelected(state);
-	if (items.empty()) {
+	if (items.empty()
+		&& !(_inner->hasFocus() && Ui::ScreenReaderModeActive())) {
 		doSetInnerFocus();
 	}
 }
@@ -1654,7 +1679,7 @@ void ScheduledWidget::listAddTranslatedItems(
 	not_null<TranslateTracker*> tracker) {
 }
 
-Ui::ScrollArea *ScheduledWidget::listScrollArea() const {
+Ui::ElasticScroll *ScheduledWidget::listScrollArea() const {
 	return _scroll.data();
 }
 

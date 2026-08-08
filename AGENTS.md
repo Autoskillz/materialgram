@@ -21,7 +21,7 @@ wsl.exe -d {distro} --cd /home/{user}/Telegram/tdesktop -- <command>
 - For WSL/Linux builds, use the Docker build entry point from the repository root: `Telegram/build/docker/centos_env/build_debug.sh`. The Docker daemon must be reachable from WSL; checking `docker info` is fine, but do not start a build unless the user asked for one.
 - Existing build outputs may be Linux binaries, for example `out/Debug/Telegram` as an ELF executable, not `Telegram.exe`. Verify the build tree before assuming which platform produced it.
 - Be careful with text file line endings. In a WSL/Linux checkout, files should remain LF-only unless the file already uses another convention. CRLF finishing applies only to native, non-WSL Windows runs/checkouts. Do not let PowerShell or Windows tools silently rewrite WSL files to CRLF. If a file becomes mixed, normalize it back to the convention appropriate for the current checkout, without adding a UTF-8 BOM.
-- When using the local `task-think` skill from this WSL checkout, keep `.ai/...` artifacts and edited project text files LF-only. Treat the skill's Windows text-normalization phase as not applicable to WSL, except to record that line endings were checked and kept LF/no-BOM. Run CRLF normalization for `task-think` only in a native, non-WSL Windows checkout.
+- When using the local `perform-task` skill from this WSL checkout, keep external AI task artifacts and edited project text files LF-only. Treat its Windows text-normalization phase as not applicable to WSL, except to record that line endings were checked and kept LF/no-BOM. Run CRLF normalization only in a native, non-WSL Windows checkout.
 
 ## Build System Structure
 
@@ -94,6 +94,53 @@ Ensure the repository is in `L:\Telegram\tdesktop`. The build system requires `.
 ### Build fails with "wrong command prompt"
 On Windows, use the correct Visual Studio Native Tools Command Prompt matching your target (x64/x86/ARM64).
 
+### macOS crashes while reading the cached language pack
+
+After an incremental Xcode build that regenerated `lang.strings` outputs, the
+app can link a new generated key lookup with stale objects that still use an
+older `kKeysCount`. The characteristic failure is:
+
+- the Debug log stops immediately after
+  `Lang Info: Loaded cached, keys: ...`;
+- stderr and `tdata/working` may be empty;
+- a fresh `~/Library/Logs/DiagnosticReports/Telegram-*.ips` shows `SIGABRT`
+  from `std::vector<unsigned char>::operator[]`, then
+  `Lang::Instance::applyValue()`, `fillFromSerialized()`, and
+  `Local::readLangPack()`.
+
+If this exact startup failure repeats twice, do not change the implementation,
+test overlay, or portable account. Stop only this checkout's exact Telegram
+process. Because Xcode's `CONFIGURATION_BUILD_DIR` is `out/Debug`, make a
+safety copy of every existing portable folder outside `out/` before cleaning:
+
+```bash
+portable_backup_root="$(mktemp -d "${TMPDIR:-/tmp}/tdesktop-portable-clean.XXXXXX")"
+for portable_name in \
+  TelegramForcePortable \
+  test_TelegramForcePortable \
+  real_TelegramForcePortable; do
+  if [ -d "out/Debug/$portable_name" ]; then
+    ditto "out/Debug/$portable_name" "$portable_backup_root/$portable_name"
+  fi
+done
+```
+
+Require every expected backup copy to exist before continuing. Then perform
+one full Xcode Debug clean and rebuild:
+
+```bash
+cmake --build out --config Debug --target clean
+cmake --build out --config Debug --target Telegram
+```
+
+Afterward, restore a portable folder from the backup only when its original
+path is missing; never overwrite a folder that survived the clean. Verify all
+three original folder names that existed before the clean are present, keep
+the backup until the rebuilt app completes one successful launch, and record
+its path if the run stops before verification. Then rerun the same test once.
+If the signature persists after that clean rebuild, continue normal crash
+diagnosis or report the blocker. Do not loop clean rebuilds.
+
 ### Build fails with PDB or EXE access errors
 
 **âš ï¸ CRITICAL: DO NOT RETRY THE BUILD. STOP AND WAIT FOR USER.**
@@ -128,6 +175,18 @@ Retrying builds wastes time and context. The ONLY fix is for the user to close t
 - On Windows, keep project text files with CRLF line endings.
 - Do not save source, header, build/config, style, or localization files as UTF-8 with BOM. Use UTF-8 without BOM.
 - When rewriting project text files for normalization, preserve file content otherwise and do not introduce a BOM.
+
+## Commits
+
+- Subject: one concise, plain-language line summarizing the change, ~50-60 characters, matching the style of recent `git log` subjects. This is usually the entire message.
+- For ordinary work not associated with an AI task, add a short plain-language body only when the subject can't carry it (what was done, not the technical how) — a line or two at most.
+- Never add a `Co-Authored-By:` line or any tool/assistant attribution trailer.
+- Never add `Autotask:`/attempt or other internal run markers. A commit owned by
+  an `ai-tdesktop` task has exactly three lines: the concise subject, a blank
+  line, and `Task: <task-id>`. Do not add a body. Keep rationale and
+  implementation notes out of the commit message; put a short durable note
+  under `tasks/<task-id>.md` only when useful. Do not copy commit hashes into
+  that note or any AI task artifact; the task id is the cross-repository link.
 
 ## Local Storage Serialization
 
@@ -183,25 +242,44 @@ QString currentTitle = tr::lng_settings_title(tr::now);
 rpl::producer<QString> nameProducer = GetNameProducer();
 ```
 
-**Use trailing return types for long return types:**
+**Use trailing return types only when the normal form is too long:**
 
-Never split a long return type onto the line before a function declaration or definition:
-
-```cpp
-// BAD:
-std::shared_ptr<PlaceholderBlockRuntime>
-getOrCreatePlaceholderRuntime(PreparedPlaceholderBlockId id);
-```
-
-Use `auto` with a trailing return type instead:
+Prefer the normal return type form when the opening line fits comfortably, roughly around 77 characters or less:
 
 ```cpp
 // GOOD:
-auto getOrCreatePlaceholderRuntime(PreparedPlaceholderBlockId id)
--> std::shared_ptr<PlaceholderBlockRuntime>;
+[[nodiscard]] TextWithEntities FlattenSummaryBlocks(
+	const std::vector<Block> &blocks);
 ```
 
-This applies to both declarations and definitions. It keeps the method name at the front, makes scanning easier, and avoids orphaned return-type lines.
+Do not use one-line trailing return types, or put the trailing return type after `)` on the same line. If it fits on one line with trailing syntax, the normal form would be shorter and easier to read:
+
+```cpp
+// BAD:
+auto ComputeTitle() -> QString;
+
+// BAD:
+[[nodiscard]] auto FlattenSummaryBlocks(
+	const std::vector<Block> &blocks) -> TextWithEntities;
+```
+
+Use `auto` with a trailing return type only when the normal opening line
+`{attributes} {return-type} {class-name::}{function-name(}` would be too long, or would force the return type onto its own line. Put the arrow and return type on the next line so the return type remains easy to find:
+
+```cpp
+// BAD:
+not_null<HistoryView::Controls::ComposeAiButton*>
+HistoryView::Controls::SetupCaptionAiButton(SetupCaptionAiButtonArgs &&args);
+```
+
+```cpp
+// GOOD:
+auto HistoryView::Controls::SetupCaptionAiButton(
+		SetupCaptionAiButtonArgs &&args)
+-> not_null<HistoryView::Controls::ComposeAiButton*>;
+```
+
+This applies to both declarations and definitions.
 
 **Use `_q` for QString literals:**
 
@@ -214,6 +292,29 @@ auto text = u"Settings"_q;
 // Instead of this:
 auto text = QStringLiteral("Settings");
 ```
+
+**Never use `Q_OS_LINUX` for platform checks in new code:**
+
+Telegram Desktop distinguishes at most three platforms: Windows / macOS / all-other. The "all-other" branch covers Linux, the BSD variants and more — and this is almost always the branch you want. `Q_OS_LINUX` narrows it to Linux alone, silently excluding the non-Linux Unix platforms, which is almost never intended. For the all-other branch use `!defined Q_OS_WIN && !defined Q_OS_MAC` at compile time, or its runtime equivalent `Platform::IsLinux()` — which, despite the name, means exactly `!defined Q_OS_WIN && !defined Q_OS_MAC` ("everything except Windows and macOS"), not Linux specifically:
+
+```cpp
+// BAD - excludes FreeBSD and other non-Linux Unix:
+#ifdef Q_OS_LINUX
+UnixSpecificCode();
+#endif // Q_OS_LINUX
+
+// GOOD - the all-other branch, compile time:
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+UnixSpecificCode();
+#endif // !Q_OS_WIN && !Q_OS_MAC
+
+// GOOD - the all-other branch, runtime (same meaning, NOT Linux-only):
+if (Platform::IsLinux()) {
+	UnixSpecificCode();
+}
+```
+
+`Q_OS_LINUX` is only for the rare case where you genuinely want exactly Linux and not the other Unix-like systems — usually you don't. The few existing uses (`Telegram/SourceFiles/core/sandbox.cpp`, `Telegram/SourceFiles/platform/linux/specific_linux.cpp`) are such genuinely Linux-only code paths and stay as-is.
 
 ## API Usage
 
